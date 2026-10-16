@@ -4,8 +4,16 @@ export default async function handler(request, response) {
     return response.status(503).json({ error: 'The analysis backend has not been configured.' });
   }
 
-  const path = request.query.path;
-  const apiPath = Array.isArray(path) ? path.join('/') : String(path || '');
+  // Vercel's catch-all query parameter is not consistently populated across
+  // deployment configurations. Resolve the endpoint from the incoming URL,
+  // which preserves the actual route (for example, /api/analyze).
+  const incomingUrl = new URL(request.url, 'http://vercel.local');
+  const apiPath = decodeURIComponent(
+    incomingUrl.pathname.replace(/^\/api\/?/, '').replace(/\/+$/, '')
+  ) || (Array.isArray(request.query?.path)
+    ? request.query.path.join('/')
+    : String(request.query?.path || ''));
+
   if (!['analyze', 'benchmark', 'fasta'].includes(apiPath)) {
     return response.status(404).json({ error: 'API route not found.' });
   }
@@ -14,7 +22,6 @@ export default async function handler(request, response) {
     return response.status(405).json({ error: 'Method not allowed.' });
   }
 
-  const incomingUrl = new URL(request.url, 'http://vercel.local');
   const upstreamUrl = `${backendUrl.replace(/\/$/, '')}/api/${apiPath}${incomingUrl.search}`;
   const headers = { accept: request.headers.accept || 'application/json' };
   if (request.headers['content-type']) headers['content-type'] = request.headers['content-type'];
