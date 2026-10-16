@@ -1,5 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 let analysis = null, traceEvents = [], traceIndex = -1, matrixKind = 'LCS_TABULATION', playback = null, benchmarkRows = [], fastaRecords = [];
+const outputExpanded = { matches: false, ops: false };
+const OUTPUT_PREVIEW_COUNT = 20;
 
 function showView(id) {
   document.querySelectorAll('.view').forEach(view => view.classList.toggle('active', view.id === id));
@@ -66,19 +68,57 @@ function escapeHtml(value) { return String(value).replace(/[&<>"']/g, char => ({
 
 function variantValue(select) { return ({ 'Full-table DP': 'TABULATION', 'Memoization': 'MEMOIZATION', 'Rolling rows': 'ROLLING_ROWS' })[select.value]; }
 $('#run').addEventListener('click', async () => {
-  clearInterval(playback); playback = null; $('#error').textContent = '';
-  const button = $('#run'); button.disabled = true; button.textContent = 'Computing…';
+  clearInterval(playback); playback = null;
+  $('#error').textContent = '';
+  const button = $('#run');
+  const originalLabel = 'Compare sequences <span>→</span>';
+  const controls = [...$('#input').querySelectorAll('input, textarea, select, button')]
+    .filter(control => control !== button && !control.matches('[data-view]'))
+    .map(control => [control, control.disabled]);
+  controls.forEach(([control]) => { control.disabled = true; });
+  $('#input').setAttribute('aria-busy', 'true');
+  $('#runStatus').hidden = false;
+  $('#runStatus').classList.remove('is-error');
+  $('#runStatus').textContent = 'Sending both sequences to the Java backend…';
+  if (analysis) $('#resultState').textContent = 'Previous result · new analysis running';
+  button.disabled = true;
+  button.setAttribute('aria-busy', 'true');
+  button.innerHTML = '<span class="spinner" aria-hidden="true"></span> Analyzing…';
+
+  const payload = {
+    sequenceA: $('#a').value, sequenceB: $('#b').value,
+    includeTrace: $('#trace').checked, includeTables: $('#tables').checked,
+    lcsVariant: variantValue($('#lcsVariant')), editVariant: variantValue($('#editVariant'))
+  };
   try {
-    const response = await fetch('/api/analyze', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-      sequenceA: $('#a').value, sequenceB: $('#b').value, includeTrace: $('#trace').checked, includeTables: $('#tables').checked,
-      lcsVariant: variantValue($('#lcsVariant')), editVariant: variantValue($('#editVariant'))
-    }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Analysis failed.');
-    analysis = body; traceEvents = body.trace || []; traceIndex = -1; renderAnalysis(); showView('journey');
-  } catch (error) { $('#error').textContent = error.message; }
-  finally { button.disabled = false; button.textContent = '▷ Compare sequences'; }
+    const response = await fetch('/api/analyze', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error || 'Analysis failed.');
+    analysis = body; traceEvents = body.trace || []; traceIndex = -1;
+    outputExpanded.matches = false; outputExpanded.ops = false;
+    renderAnalysis();
+    showView('results');
+    $('#runStatus').textContent = 'Analysis complete. The Results dashboard shows the latest server response.';
+    $('#resultState').textContent = 'Latest run · verified server result';
+  } catch (error) {
+    $('#error').textContent = error.message || 'Analysis failed. Please review the input and try again.';
+    $('#runStatus').classList.add('is-error');
+    $('#runStatus').textContent = 'Analysis failed. Your input has been preserved.';
+    if (analysis) $('#resultState').textContent = 'Previous result · latest run failed';
+  } finally {
+    controls.forEach(([control, wasDisabled]) => { control.disabled = wasDisabled; });
+    $('#input').removeAttribute('aria-busy');
+    button.disabled = false;
+    button.removeAttribute('aria-busy');
+    button.innerHTML = originalLabel;
+  }
 });
 
+function summarizeSequence(sequence) {
+  return sequence.length <= 34 ? sequence : `${sequence.slice(0, 20)}…${sequence.slice(-10)}`;
+}
 function renderAnalysis() {
   const a = analysis.sequenceA, b = analysis.sequenceB;
   $('#journeyState').textContent = 'Comparison complete';
@@ -87,15 +127,34 @@ function renderAnalysis() {
   $('#validation').innerHTML = `<span class="ok">✓</span> Whitespace was removed, lowercase was normalized, IUPAC DNA symbols were validated, and both lengths are within the 2,000 base limit.`;
   $('#lcsName').textContent = `LCS · ${analysis.lcsAlgorithm.replace('_', ' ').toLowerCase()}`;
   $('#editName').textContent = `Edit distance · ${analysis.editAlgorithm.replace('_', ' ').toLowerCase()}`;
-  $('#resultState').textContent = 'Verified server result';
+  $('#resultState').textContent = 'Latest run · verified server result';
   $('#resultsText').textContent = `Computed for ${a.length} × ${b.length} input bases using ${analysis.lcsAlgorithm} and ${analysis.editAlgorithm}.`;
+  $('#resultPair').innerHTML = `<div><span>SEQUENCE A</span><code>${escapeHtml(summarizeSequence(a))}</code><small>${a.length.toLocaleString()} bases</small></div><div><span>SEQUENCE B</span><code>${escapeHtml(summarizeSequence(b))}</code><small>${b.length.toLocaleString()} bases</small></div>`;
   $('#lcsn').textContent = analysis.lcsLength; $('#lcs').textContent = analysis.lcs || '∅';
   $('#lcss').textContent = `${analysis.lcsSimilarity.toFixed(2)}%`; $('#edit').textContent = analysis.editDistance;
   $('#edits').textContent = `${analysis.editSimilarity.toFixed(2)}%`; $('#opcount').textContent = analysis.editOperations.length;
-  $('#matches').innerHTML = analysis.matches.map(item => `<span class="chip match">${item.nucleotide} · A[${item.indexA}] / B[${item.indexB}]</span>`).join('') || 'No matched positions.';
-  $('#ops').innerHTML = analysis.editOperations.map(item => `<span class="chip ${item.type.toLowerCase()}">${item.type} ${item.characterA} → ${item.characterB}</span>`).join('');
+  renderAlignmentOutputs();
   $('#visualState').textContent = analysis.traceAvailable ? 'Trace available' : 'Trace unavailable above 30 bases or not requested';
   drawMatrix();
+}
+function renderAlignmentOutputs() {
+  if (!analysis) return;
+  const matches = analysis.matches || [];
+  const operations = analysis.editOperations || [];
+  const shownMatches = outputExpanded.matches ? matches : matches.slice(0, OUTPUT_PREVIEW_COUNT);
+  const shownOperations = outputExpanded.ops ? operations : operations.slice(0, OUTPUT_PREVIEW_COUNT);
+  $('#matches').innerHTML = shownMatches.map(item => `<span class="chip match">${escapeHtml(item.nucleotide)} · A[${item.indexA}] / B[${item.indexB}]</span>`).join('') || '<span class="output-empty">No matched positions.</span>';
+  $('#ops').innerHTML = shownOperations.map(item => `<span class="chip ${escapeHtml(String(item.type).toLowerCase())}">${escapeHtml(item.type)} ${escapeHtml(item.characterA || '∅')} → ${escapeHtml(item.characterB || '∅')}</span>`).join('') || '<span class="output-empty">No edit operations required.</span>';
+  $('#matches').classList.toggle('expanded', outputExpanded.matches);
+  $('#ops').classList.toggle('expanded', outputExpanded.ops);
+  $('#matchesMeta').textContent = `${matches.length.toLocaleString()} matched positions${matches.length > OUTPUT_PREVIEW_COUNT && !outputExpanded.matches ? ` · showing first ${OUTPUT_PREVIEW_COUNT}` : ''}`;
+  $('#opsMeta').textContent = `${operations.length.toLocaleString()} edit operations${operations.length > OUTPUT_PREVIEW_COUNT && !outputExpanded.ops ? ` · showing first ${OUTPUT_PREVIEW_COUNT}` : ''}`;
+  $('#toggleMatches').hidden = matches.length <= OUTPUT_PREVIEW_COUNT;
+  $('#toggleOps').hidden = operations.length <= OUTPUT_PREVIEW_COUNT;
+  $('#toggleMatches').textContent = outputExpanded.matches ? 'Show fewer' : `Show all ${matches.length.toLocaleString()}`;
+  $('#toggleOps').textContent = outputExpanded.ops ? 'Show fewer' : `Show all ${operations.length.toLocaleString()}`;
+  $('#toggleMatches').setAttribute('aria-expanded', String(outputExpanded.matches));
+  $('#toggleOps').setAttribute('aria-expanded', String(outputExpanded.ops));
 }
 
 function selectedEvents() { return traceEvents.filter(event => event.algorithm === matrixKind); }
