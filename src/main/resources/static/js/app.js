@@ -187,11 +187,11 @@ $('#toggleOps').addEventListener('click', () => {
   renderAlignmentOutputs();
 });
 $('#copyMatches').addEventListener('click', () => {
-  const text = (analysis?.matches || []).map(item => `${item.nucleotide}\\tA[${item.indexA}]\\tB[${item.indexB}]`).join('\\n') || 'No matched positions.';
+  const text = (analysis?.matches || []).map(item => `${item.nucleotide}\tA[${item.indexA}]\tB[${item.indexB}]`).join('\n') || 'No matched positions.';
   copyOutput(text, 'Matched positions');
 });
 $('#copyOps').addEventListener('click', () => {
-  const text = (analysis?.editOperations || []).map(item => `${item.type}\\t${item.characterA || '∅'}\\t${item.characterB || '∅'}`).join('\\n') || 'No edit operations required.';
+  const text = (analysis?.editOperations || []).map(item => `${item.type}\t${item.characterA || '∅'}\t${item.characterB || '∅'}`).join('\n') || 'No edit operations required.';
   copyOutput(text, 'Edit operations');
 });
 $('#downloadAnalysis').addEventListener('click', () => {
