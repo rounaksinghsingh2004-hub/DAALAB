@@ -61,3 +61,5 @@ label{line-height:1.5}
 
 /* Keep secondary instructions readable without changing the navigation layout. */
 .panel label>small{font-size:11px!important;color:#a1b1c4!important}
+
+.run-status[hidden]{display:none!important}
