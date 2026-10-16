@@ -157,6 +157,60 @@ function renderAlignmentOutputs() {
   $('#toggleOps').setAttribute('aria-expanded', String(outputExpanded.ops));
 }
 
+async function copyOutput(value, label) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const field = document.createElement('textarea');
+      field.value = value;
+      field.setAttribute('readonly', '');
+      field.style.position = 'fixed';
+      field.style.opacity = '0';
+      document.body.appendChild(field);
+      field.select();
+      const copied = document.execCommand('copy');
+      field.remove();
+      if (!copied) throw new Error('Clipboard access is unavailable in this browser.');
+    }
+    $('#outputStatus').textContent = `${label} copied to clipboard.`;
+  } catch (error) {
+    $('#outputStatus').textContent = error.message || `Could not copy ${label.toLowerCase()}.`;
+  }
+}
+$('#toggleMatches').addEventListener('click', () => {
+  outputExpanded.matches = !outputExpanded.matches;
+  renderAlignmentOutputs();
+});
+$('#toggleOps').addEventListener('click', () => {
+  outputExpanded.ops = !outputExpanded.ops;
+  renderAlignmentOutputs();
+});
+$('#copyMatches').addEventListener('click', () => {
+  const text = (analysis?.matches || []).map(item => `${item.nucleotide}\\tA[${item.indexA}]\\tB[${item.indexB}]`).join('\\n') || 'No matched positions.';
+  copyOutput(text, 'Matched positions');
+});
+$('#copyOps').addEventListener('click', () => {
+  const text = (analysis?.editOperations || []).map(item => `${item.type}\\t${item.characterA || '∅'}\\t${item.characterB || '∅'}`).join('\\n') || 'No edit operations required.';
+  copyOutput(text, 'Edit operations');
+});
+$('#downloadAnalysis').addEventListener('click', () => {
+  if (!analysis) {
+    $('#outputStatus').textContent = 'Run a comparison before downloading results.';
+    return;
+  }
+  const content = JSON.stringify({ exportedAt: new Date().toISOString(), results: analysis }, null, 2);
+  const url = URL.createObjectURL(new Blob([content], { type: 'application/json;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'dna-analysis-results.json';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  $('#outputStatus').textContent = 'Results JSON download started.';
+});
+
 function selectedEvents() { return traceEvents.filter(event => event.algorithm === matrixKind); }
 function drawMatrix() {
   if (!analysis) return;
