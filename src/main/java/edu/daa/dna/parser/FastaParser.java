@@ -10,6 +10,7 @@ public class FastaParser {
   private final SequenceValidator validator;
   public FastaParser(SequenceValidator validator) { this.validator = validator; }
   public List<FastaRecord> parse(String text) {
+    if (text == null || text.isBlank()) throw new IllegalArgumentException("FASTA content is required.");
     List<FastaRecord> records = new ArrayList<>(); String header = null; StringBuilder sequence = new StringBuilder();
     for (String line : text.replace("\r", "").split("\n")) {
       if (line.startsWith(">")) { if (header != null) records.add(new FastaRecord(header, validator.normalize(sequence.toString()))); header=line.substring(1).trim(); sequence.setLength(0); }
