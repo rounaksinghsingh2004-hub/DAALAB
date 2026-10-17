@@ -1,5 +1,46 @@
 const $ = (selector) => document.querySelector(selector);
 let analysis = null, traceEvents = [], traceIndex = -1, matrixKind = 'LCS_TABULATION', playback = null, benchmarkRows = [], fastaRecords = [];
+
+async function postJson(url, payload, fallbackMessage) {
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch (error) {
+    throw new Error('Could not reach the service. Check the internet connection and retry. Your input has been preserved.');
+  }
+
+  let body = null;
+  try {
+    body = await response.json();
+  } catch (error) {
+    // Some gateways return an HTML error page while a sleeping service starts.
+  }
+
+  if (!response.ok) {
+    if ([502, 503, 504].includes(response.status)) {
+      throw new Error('The backend may be waking up or temporarily unavailable. Wait up to a minute, then retry. Your input has been preserved.');
+    }
+    throw new Error(body && body.error ? body.error : `${fallbackMessage} (HTTP ${response.status}).`);
+  }
+  if (body === null || typeof body !== 'object') {
+    throw new Error('The server returned an unreadable response. Please retry the request.');
+  }
+  return body;
+}
+
+function readFileText(file) {
+  if (typeof file.text === 'function') return file.text();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('This browser could not read the selected file.'));
+    reader.readAsText(file);
+  });
+}
 const outputExpanded = { matches: false, ops: false };
 const OUTPUT_PREVIEW_COUNT = 20;
 
@@ -54,8 +95,7 @@ $('#fasta').addEventListener('change', async event => {
   const file = event.target.files?.[0]; if (!file) return;
   $('#records').textContent = 'Parsing FASTA on the server…';
   try {
-    const response = await fetch('/api/fasta', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content: await file.text() }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Could not parse this FASTA file.');
+    const body = await postJson('/api/fasta', { content: await readFileText(file) }, 'Could not parse this FASTA file.');
     fastaRecords = body;
     if (body.length < 2) throw new Error('Choose a FASTA file with at least two records to compare.');
     const options = body.map((record, index) => `<option value="${index}">${escapeHtml(record.header || `Record ${index + 1}`)} · ${record.sequence.length} bases</option>`).join('');
@@ -91,11 +131,7 @@ $('#run').addEventListener('click', async () => {
     lcsVariant: variantValue($('#lcsVariant')), editVariant: variantValue($('#editVariant'))
   };
   try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-    });
-    const body = await response.json();
-    if (!response.ok) throw new Error(body.error || 'Analysis failed.');
+    const body = await postJson('/api/analyze', payload, 'Analysis failed.');
     analysis = body; traceEvents = body.trace || []; traceIndex = -1;
     outputExpanded.matches = false; outputExpanded.ops = false;
     renderAnalysis();
@@ -219,7 +255,7 @@ function drawMatrix() {
   const matrixHtml = renderGrid(events, current, traceIndex);
   $('#matrix').innerHTML = matrixHtml; $('#visualMatrix').innerHTML = matrixHtml;
   if (!current) { $('#eventTitle').textContent = events.length ? 'Ready to play' : 'No trace returned'; $('#explain').textContent = events.length ? 'Advance one step to inspect the first cell calculation.' : 'The server omits detailed traces above 30 bases per sequence.'; $('#rule').textContent = '—'; $('#cell').textContent = '—'; $('#value').textContent = '—'; return; }
-  $('#eventTitle').textContent = `${current.algorithm.replaceAll('_', ' ')} · step ${traceIndex + 1}`;
+  $('#eventTitle').textContent = `${current.algorithm.replace(/_/g, ' ')} · step ${traceIndex + 1}`;
   $('#explain').textContent = current.explanation; $('#rule').textContent = current.rule;
   $('#cell').textContent = `[${current.row}, ${current.column}] · ${current.characterA}/${current.characterB}`; $('#value').textContent = current.value;
   $('#visualEvent').textContent = `Cell [${current.row}, ${current.column}] · ${current.rule}`; $('#visualExplain').textContent = current.explanation;
@@ -269,8 +305,16 @@ $('#benchform').addEventListener('submit', async event => {
   $('#benchmarkError').textContent = ''; $('#bars').textContent = 'Timing Java computations…';
   const button = $('#benchform button[type="submit"]'); button.disabled = true;
   try {
-    const response = await fetch('/api/benchmark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ problem: $('#problem').value, algorithms: checks.map(input => input.value), size: Number($('#size').value), repetitions: Number($('#reps').value), seed: Number($('#seed').value), pattern: $('#pattern').value }) });
-    const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Benchmark failed.'); benchmarkRows = body.results; renderBenchmark(body);
+    const body = await postJson('/api/benchmark', {
+      problem: $('#problem').value,
+      algorithms: checks.map(input => input.value),
+      size: Number($('#size').value),
+      repetitions: Number($('#reps').value),
+      seed: Number($('#seed').value),
+      pattern: $('#pattern').value
+    }, 'Benchmark failed.');
+    benchmarkRows = body.results;
+    renderBenchmark(body);
   } catch (error) { $('#bars').textContent = error.message; } finally { button.disabled = false; }
 });
 function renderBenchmark(result) {

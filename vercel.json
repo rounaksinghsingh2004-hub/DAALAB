@@ -4,7 +4,7 @@
   "outputDirectory": "src/main/resources/static",
   "functions": {
     "api/[...path].js": {
-      "maxDuration": 30,
+      "maxDuration": 120,
       "regions": ["sin1"]
     }
   }

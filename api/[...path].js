@@ -37,7 +37,7 @@ export default async function handler(request, response) {
       method: request.method,
       headers,
       body,
-      signal: AbortSignal.timeout(25_000)
+      signal: AbortSignal.timeout(105_000)
     });
     const responseBody = await upstream.text();
     response.status(upstream.status);
@@ -46,6 +46,11 @@ export default async function handler(request, response) {
     return response.send(responseBody);
   } catch (error) {
     console.error('Backend proxy failed:', error.message);
-    return response.status(502).json({ error: 'The analysis backend could not be reached.' });
+    const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+    return response.status(timedOut ? 504 : 502).json({
+      error: timedOut
+        ? 'The analysis service is taking longer than expected to wake up. Please wait a minute and retry.'
+        : 'The analysis backend could not be reached. Check your connection and retry.'
+    });
   }
 }
